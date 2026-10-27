@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+# Сгенерированные артефакты — воспроизводятся скриптами из data/
+html/cards/card_*.html
+html/cards_manifest.js
+
+AGENTS.md
+
+# Runtime data for the redesigned UI (python3 scripts/build_app_data.py)
+html/assets/data/
+.venv/
