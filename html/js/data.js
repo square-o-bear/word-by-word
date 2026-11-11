@@ -1,3 +1,5 @@
+import { plain } from "./ui.js";
+
 const URL_ROOT = new URL("../assets/data/", import.meta.url);
 export async function loadCatalog() {
   const response = await fetch(new URL("catalog.json", URL_ROOT));
@@ -28,6 +30,7 @@ export function adaptCard(raw) {
     options = options.map((s) => String(s).replace(/^\s*\d\)\s*/, ""));
   }
   let instruction = raw.question;
+  const questionText = plain(raw.question);
   if (
     raw.errors?.length &&
     raw.sentences?.length &&
@@ -50,22 +53,79 @@ export function adaptCard(raw) {
         : options.length > 0 &&
             (raw.answer_type === "bitmask" ||
               /(?:укажите|запишите)\s+(?:все\s+)?(?:варианты|номера)/i.test(
-                raw.question,
+                questionText,
               ) ||
-              /словарной статьи/i.test(raw.question))
+              /словарной статьи/i.test(questionText))
           ? "multiple_choice"
-          : /(?:укажите|запишите)[^.!?]*цифр/i.test(raw.question)
+          : /(?:укажите|запишите)[^.!?]*цифр/i.test(questionText)
             ? "position_set"
             : "short_text",
     answer: (raw.answer || "").trim(),
+    acceptedAnswers: Array.isArray(raw.accepted_answers) ? raw.accepted_answers : [(raw.answer || "").trim()],
     explanation: raw.explanation || "",
-    // Imported legacy values have not acquired editorial verification.
-    reviewStatus: "unverified",
+    contentIssue: typeof raw.content_issue === "string" ? raw.content_issue.trim() : "",
     ruleIds: raw.rule_ids || [],
   };
 }
 
 let handbookPromise;
+let paronymIndexPromise;
+export function loadParonymIndex() {
+  if (!paronymIndexPromise)
+    paronymIndexPromise = fetch(new URL("paronym-index.json", URL_ROOT))
+      .then((response) => {
+        if (!response.ok) throw new Error("Список паронимов недоступен.");
+        return response.json();
+      })
+      .catch((error) => {
+        paronymIndexPromise = null;
+        throw error;
+      });
+  return paronymIndexPromise;
+}
+export const paronymListSourceUrl = new URL(
+  "paronym-index-source.pdf",
+  URL_ROOT,
+).href;
+
+const dictionaryPromises = new Map();
+export async function loadDictionaryArticle(dictionaryId, entryId) {
+  if (!/^[a-z0-9-]+$/.test(dictionaryId || "")) return null;
+  if (!dictionaryPromises.has(dictionaryId)) {
+    dictionaryPromises.set(
+      dictionaryId,
+      fetch(new URL(`dictionaries/${dictionaryId}.json`, URL_ROOT))
+        .then((response) => {
+          if (!response.ok) throw new Error("Словарная статья недоступна.");
+          return response.json();
+        })
+        .catch((error) => {
+          dictionaryPromises.delete(dictionaryId);
+          throw error;
+        }),
+    );
+  }
+  const dictionary = await dictionaryPromises.get(dictionaryId);
+  const article = dictionary.entries.find((entry) => entry.id === entryId);
+  return article ? { ...article, title: dictionary.title } : null;
+}
+
+let stressListPromise;
+export function loadStressList() {
+  if (!stressListPromise)
+    stressListPromise = fetch(new URL("stress-list.json", URL_ROOT))
+      .then((response) => {
+        if (!response.ok) throw new Error("Список ударений недоступен.");
+        return response.json();
+      })
+      .catch((error) => {
+        stressListPromise = null;
+        throw error;
+      });
+  return stressListPromise;
+}
+export const stressSourceUrl = new URL("stress-list-source.pdf", URL_ROOT).href;
+
 export function loadHandbook() {
   if (!handbookPromise)
     handbookPromise = fetch(new URL("handbook.json", URL_ROOT))
@@ -108,3 +168,20 @@ export async function loadSourceParagraph(id) {
   if (!response.ok) throw new Error("Параграф источника недоступен.");
   return response.json();
 }
+
+let stressGlossaryPromise;
+export async function loadStressGlossary() {
+  if (!stressGlossaryPromise)
+    stressGlossaryPromise = fetch(new URL("stress-glossary.json", URL_ROOT))
+      .then((response) => {
+        if (!response.ok) throw new Error("Словарик ударений недоступен.");
+        return response.json();
+      })
+      .catch((error) => {
+        stressGlossaryPromise = null;
+        throw error;
+      });
+  return stressGlossaryPromise;
+}
+
+export const stressGlossaryTextUrl = new URL("stress-glossary.txt", URL_ROOT).href;

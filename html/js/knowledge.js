@@ -4,6 +4,16 @@ import {
   loadSourceParagraph,
 } from "./data.js";
 import { esc, rich } from "./ui.js";
+import { stressListPage } from "./stress-list.js";
+import { stressGlossaryPage } from "./stress-glossary.js";
+import { lexicalNormsPage } from "./lexical-norms.js";
+import { wordFormsPage } from "./word-forms.js";
+import { textSkillsPage } from "./text-skills.js";
+import {
+  paronymListPage,
+  paronymTheoryPage,
+  dictionaryArticlePage,
+} from "./paronyms.js";
 const partName = (part) =>
   part === "orthography" ? "Орфография" : "Пунктуация";
 const context = (meta) => (meta ? `&card=${meta.id}` : "");
@@ -16,6 +26,47 @@ export async function knowledgePage({ params, catalog, heading, empty }) {
   const safeHeading = (kicker, title, subtitle) =>
     heading(kicker, esc(title), esc(subtitle));
   const meta = catalog.cards.find((c) => c.id === params.get("card"));
+  if (["connections", "meanings", "style"].includes(params.get("list")))
+    return textSkillsPage({
+      kind: params.get("list"),
+      heading,
+      backLink: back(meta),
+      cardId: meta?.id,
+      catalog,
+    });
+  if (params.get("dictionary"))
+    return dictionaryArticlePage({
+      params,
+      heading,
+      backLink: back(meta),
+      task: meta?.task,
+    });
+  if (params.get("list") === "lexical")
+    return lexicalNormsPage({
+      heading,
+      backLink: back(meta),
+      cardId: meta?.id,
+      catalog,
+    });
+  if (params.get("list") === "word-forms")
+    return wordFormsPage({
+      heading,
+      backLink: back(meta),
+      cardId: meta?.id,
+      catalog,
+    });
+  if (params.get("list") === "paronyms" && params.get("view") === "theory")
+    return paronymTheoryPage({
+      heading,
+      backLink: back(meta),
+      cardId: meta?.id,
+    });
+  if (params.get("list") === "paronyms")
+    return paronymListPage({ heading, backLink: back(meta), cardId: meta?.id });
+  if (params.get("list") === "stress-words")
+    return stressGlossaryPage({ heading, backLink: back(meta), cardId: meta?.id });
+  if (params.get("list") === "stress")
+    return stressListPage({ heading, backLink: back(meta) });
   const ruleId = params.get("rule"),
     sourceId = params.get("source"),
     editionId = params.get("edition");
@@ -101,6 +152,6 @@ export async function knowledgePage({ params, catalog, heading, empty }) {
           "Выберите правило в справочнике.",
           '<a class="text-link" href="#knowledge">Открыть справочник</a>',
         )) +
-    `<section class="panel method-panel"><h2>Библиотека источников</h2>${sources.editions.map((e) => `<p><a class="text-link" href="#knowledge?edition=${e.id}${context(meta)}">${esc(e.title)} · ${esc(e.publisher)}, ${esc(e.year)}</a></p>`).join("")}</section>`
+    `<section class="panel method-panel"><h2>Библиотека источников</h2><p><a class="text-link" href="#knowledge?list=connections${context(meta)}">Средства связи: подбор пропущенного слова</a></p><p><a class="text-link" href="#knowledge?list=meanings${context(meta)}">Значение слова в контексте</a></p><p><a class="text-link" href="#knowledge?list=style${context(meta)}">Как анализировать текст</a></p><p><a class="text-link" href="#knowledge?list=word-forms${context(meta)}">Формы слов: существительные, числительные, местоимения и глаголы</a></p><p><a class="text-link" href="#knowledge?list=lexical${context(meta)}">Лексические нормы: удаление лишнего слова и замена</a></p><p><a class="text-link" href="#knowledge?list=paronyms${context(meta)}">Алфавитный список паронимов из всех упражнений</a></p><p><a class="text-link" href="#knowledge?list=stress-words${context(meta)}">Словарик ударений из всех карточек</a></p><p><a class="text-link" href="#knowledge?list=stress${context(meta)}">Полный список ударений по частям речи · ФИПИ, 2026</a></p>${sources.editions.map((e) => `<p><a class="text-link" href="#knowledge?edition=${e.id}${context(meta)}">${esc(e.title)} · ${esc(e.publisher)}, ${esc(e.year)}</a></p>`).join("")}</section>`
   );
 }

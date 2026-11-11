@@ -3,6 +3,7 @@
 
 Standard library only. Does not contact FIPI or validate educational answers.
 """
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -16,6 +17,11 @@ def check(root):
         'js/settings.js', 'js/ui.js', 'js/learning.js', 'js/progress.js', 'js/hints.js', 'js/bank-order.js', 'js/assessment.js', 'js/adaptive.js', 'js/knowledge.js', 'js/progress-transfer.js',
         'assets/data/catalog.json', 'assets/data/handbook.json', 'assets/data/handbook-sources.json',
         'assets/brand/slovo-za-slovo-school.png',
+        'js/stress-glossary.js', 'assets/data/stress-glossary.json', 'assets/data/stress-glossary.txt',
+        'js/stress-list.js', 'assets/data/stress-list.json', 'assets/data/stress-list-source.pdf',
+        'js/paronyms.js',
+        'js/lexical-norms.js',
+        'assets/data/paronym-index.json', 'assets/data/paronym-index-source.pdf',
     ]
     for relative in required:
         path = root / relative
@@ -29,7 +35,7 @@ def check(root):
     for path in root.rglob('*'):
         if path.is_symlink():
             raise ValueError(f'Symlinks are not allowed in Pages artifact: {path}')
-        if path.name in {'.git', '.env', 'node_modules', '__pycache__'}:
+        if path.name in {'.git', '.env', 'node_modules', '__pycache__', 'dev', 'review-debug.js', 'review-debug.json'}:
             raise ValueError(f'Unexpected file/directory in public site: {path}')
     catalog = json.loads((root / 'assets/data/catalog.json').read_text())
     ids = [c['id'] for c in catalog['cards']]
@@ -67,6 +73,33 @@ def check(root):
     for card in catalog['cards']:
         for ref in card.get('explanationSourceRefs', []):
             if ref['sourceId'] not in source_ids: raise ValueError('Missing explanation source for ' + card['id'])
+        refs = list(card.get('dictionarySourceRefs', []))
+        for pair in card.get('paronymComparisons', []):
+            refs.extend(ref for word in pair['words'] for ref in word['dictionaryRefs'])
+        for ref in refs:
+            sid = ref['dictionaryId']
+            extension = 'json' if ref.get('entryId') else 'pdf'
+            path = root / 'assets/data/dictionaries' / f'{sid}.{extension}'
+            if not re.fullmatch(r'[a-z0-9-]+', sid) or not path.is_file():
+                raise ValueError('Missing dictionary source for ' + card['id'])
+            if extension == 'json':
+                articles = json.loads(path.read_text())['entries']
+                if not any(a['id'] == ref['entryId'] and a['headword'] == ref['headword'] for a in articles):
+                    raise ValueError('Missing dictionary article for ' + card['id'])
+    lexical = {source['id']:source for source in json.loads((root/'assets/data/lexical-sources.json').read_text())['sources']}
+    for sid, source in lexical.items():
+        if sid not in ('denisov-morkovkin-1983', 'rozental-stylistics-2001'):
+            raise ValueError('Unknown lexical source')
+        path = root/'assets/data/lexical-sources'/f'{sid}.pdf'
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != source['sha256']:
+            raise ValueError('Missing or changed lexical excerpt: '+sid)
+    for card in catalog['cards']:
+        for ref in card.get('grammarSourceRefs', []):
+            if not ref['url'].startswith('assets/'):
+                continue
+            match = re.fullmatch(r'assets/data/lexical-sources/([a-z0-9-]+)\.pdf#page=([1-9][0-9]*)', ref['url'])
+            if not match or match[1] not in lexical or not 1 <= int(match[2]) <= lexical[match[1]]['pdfPages']:
+                raise ValueError('Invalid local lexical source for '+card['id'])
     # Missing local ES module imports would otherwise cause a blank app on Pages.
     for path in (root / 'js').glob('*.js'):
         for imported in re.findall(r'\bfrom\s+[\'"]([^\'"]+)[\'"]', path.read_text()):

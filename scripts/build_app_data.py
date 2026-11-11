@@ -1,90 +1,180 @@
 #!/usr/bin/env python3
-"""Build the review UI's lazy-loaded data; never modify source card JSON.
+"""Build the static application from published data, using the standard library.
 
-Positions follow the official FIPI 2027 DRAFT; content/format review is separate.
-Run from any directory. Outputs are ignored and reproducible.
+No network, dev/ files, editorial history or development dependencies are needed.
+Only the ignored html/assets/data/ output is replaced.
 """
 import hashlib
 import json
+import shutil
 from pathlib import Path
-from generate_manifest import classify, load_cards
+from card_data import load_cards
 from exam_2027 import mapping, text
 from handbook_fb2 import read_handbook, apply_errata
+from dictionary_data import load_sources, public_ref
+from paronym_inventory import inventory as paronym_inventory
+from stress_glossary import validate_glossary, glossary_text
 
-ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / 'html' / 'assets' / 'data'
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT/'html/assets/data'
+
+
+def read(path):
+    return json.loads((ROOT/path).read_text())
+
+
+def write(path, value):
+    path.write_text(json.dumps(value,ensure_ascii=False,separators=(',',':')))
 
 
 def main():
     cards = load_cards()
     if not cards:
-        raise SystemExit('No cards found')
-    (OUT / 'cards').mkdir(parents=True, exist_ok=True)
-    catalog = []
-    profile = json.loads((ROOT / 'data/ege_2027_positions.json').read_text())
-    names = {str(p['number']): p['name'] for p in profile['positions']}
-    source_registry = json.loads((ROOT / 'data/knowledge/source_registry.json').read_text())
-    source_entries = []
-    source_ids = set()
-    source_out = OUT / 'handbook-sources'
-    source_out.mkdir(exist_ok=True)
-    for source in source_registry['editions']:
-        metadata, paragraphs = read_handbook(ROOT / 'data/knowledge' / source['sourceFile'])
-        if metadata['archiveSha256'] != source['archiveSha256'] or metadata['fb2Sha256'] != source['fb2Sha256']:
-            raise ValueError('Handbook source checksum changed: ' + source['id'])
-        if source.get('errataFile'):
-            apply_errata(paragraphs, json.loads((ROOT / 'data/knowledge' / source['errataFile']).read_text())['entries'])
-        source_entries.append({**source, 'paragraphs': [{k:v for k,v in p.items() if k not in {'body','notes','editorialNotes'}} for p in paragraphs]})
+        raise ValueError('No source cards found')
+    support = read('data/knowledge/card_support.json')['cards']
+    sources = load_sources(ROOT,read('data/knowledge/dictionary_sources.json'))
+    book = read('data/knowledge/paronyms.json')
+    pairs = {p['id']:p for p in book['pairs']}
+    if len(pairs)!=len(book['pairs']):
+        raise ValueError('Duplicate paronym comparison')
+    for pair in pairs.values():
+        if len(pair['words'])<2:
+            raise ValueError('Paronym comparison needs two or more words')
+        for word in pair['words']:
+            if not word['dictionaryRefs']:
+                raise ValueError('Missing dictionary reference')
+            for ref in word['dictionaryRefs']:
+                public_ref(ref,sources)
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    (OUT/'cards').mkdir(parents=True)
+    for name, source_name, output_name in [
+        ('stress-list','sourceFile','stress-list-source.pdf'),
+        ('paronym_inventory',None,'paronym-index-source.pdf'),
+    ]:
+        data = read(f'data/knowledge/{name}.json')
+        if name=='stress-list':
+            source_file, digest = data[source_name],data['sourceSha256']
+            write(OUT/'stress-list.json',data)
+        else:
+            source_file,digest = data['source']['file'],data['source']['sha256']
+            index = paronym_inventory(cards,data,mapping)
+            write(OUT/'paronym-index.json',{k:v for k,v in index.items() if k!='cards'})
+        source = ROOT/source_file
+        if hashlib.sha256(source.read_bytes()).hexdigest()!=digest:
+            raise ValueError('Word-list source checksum mismatch')
+        shutil.copyfile(source,OUT/output_name)
+    glossary = validate_glossary(read('data/knowledge/stress-glossary.json'), cards, mapping, text)
+    write(OUT/'stress-glossary.json', glossary)
+    (OUT/'stress-glossary.txt').write_text(glossary_text(glossary), encoding='utf-8')
+    lexical_out = OUT/'lexical-sources'
+    lexical_out.mkdir()
+    lexical_ids = set()
+    lexical_manifest = read('data/knowledge/lexical_sources.json')
+    write(OUT/'lexical-sources.json', {'sources':[{k:v for k,v in s.items() if k in ('id','sha256','pdfPages')} for s in lexical_manifest['sources']]})
+    for source in lexical_manifest['sources']:
+        sid = source['id']
+        if sid in lexical_ids or sid not in ('denisov-morkovkin-1983', 'rozental-stylistics-2001') or source['file'] != f'data/knowledge/sources/lexical/{sid}.pdf':
+            raise ValueError('Invalid lexical source path')
+        lexical_ids.add(sid)
+        raw = (ROOT/source['file']).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != source['sha256']:
+            raise ValueError('Lexical excerpt checksum mismatch')
+        (lexical_out/f'{sid}.pdf').write_bytes(raw)
+    dictionary_out = OUT/'dictionaries'
+    dictionary_out.mkdir()
+    for sid,source in sources.items():
+        if source['format']=='articles':
+            write(dictionary_out/f'{sid}.json',{'title':source['title'],'entries':source['_entries']})
+        else:
+            shutil.copyfile(ROOT/source['file'],dictionary_out/f'{sid}.pdf')
+    source_out = OUT/'handbook-sources'
+    source_out.mkdir()
+    source_entries,source_ids = [],set()
+    for edition in read('data/knowledge/source_registry.json')['editions']:
+        metadata, paragraphs = read_handbook(ROOT/'data/knowledge'/edition['sourceFile'])
+        if metadata['archiveSha256']!=edition['archiveSha256'] or metadata['fb2Sha256']!=edition['fb2Sha256']:
+            raise ValueError('Handbook source checksum mismatch')
+        if edition.get('errataFile'):
+            apply_errata(paragraphs,read('data/knowledge/'+edition['errataFile'])['entries'])
+        source_entries.append({**edition,'paragraphs':[{k:v for k,v in p.items() if k not in {'body','notes','editorialNotes'}} for p in paragraphs]})
         for paragraph in paragraphs:
             source_ids.add(paragraph['id'])
-            (source_out / f"{paragraph['id']}.json").write_text(json.dumps({**paragraph, 'edition': source}, ensure_ascii=False, separators=(',', ':')))
-    (OUT / 'handbook-sources.json').write_text(json.dumps({'schemaVersion':1, 'editions':source_entries}, ensure_ascii=False, separators=(',', ':')))
-    handbook = json.loads((ROOT / 'data/knowledge/handbook.json').read_text())
+            write(source_out/f"{paragraph['id']}.json",{**paragraph,'edition':edition})
+    write(OUT/'handbook-sources.json',{'schemaVersion':1,'editions':source_entries})
+    handbook = read('data/knowledge/handbook.json')
     for rule in handbook['paragraphs']:
-        for ref in rule.get('sourceRefs', []):
-            if ref['sourceId'] not in source_ids: raise ValueError('Missing source reference: ' + ref['sourceId'])
-    (OUT / 'handbook.json').write_text(json.dumps(handbook, ensure_ascii=False, separators=(',', ':')))
-    prefix_reviews = {r['id']:r for r in json.loads((ROOT / 'data/knowledge/prefix_card_reviews.json').read_text())['cards']}
-    overrides = json.loads((ROOT / 'data/content_review_overrides.json').read_text())['cards']
-    for c in cards:
-        cid = c['number']
-        if len(cid) != 6 or any(ch not in '0123456789ABCDEF' for ch in cid):
-            raise ValueError(f'Invalid card ID: {cid}')
-        position = mapping(c)
+        if any(r['sourceId'] not in source_ids for r in rule.get('sourceRefs',[])):
+            raise ValueError('Missing handbook paragraph')
+    write(OUT/'handbook.json',handbook)
+    policy = read('data/assessment_policy.json')['cards']
+    names = {str(p['number']):p['name'] for p in read('data/exam_profile.json')['positions']}
+    catalog = []
+    for card in cards:
+        cid = card['number']
+        if not re_id(cid):
+            raise ValueError('Invalid card ID: '+cid)
+        if 'content_issue' in card and not isinstance(card['content_issue'],str):
+            raise ValueError('content_issue must be a plain string: '+cid)
+        if 'accepted_answers' in card:
+            values=card['accepted_answers']
+            if not isinstance(values,list) or not values or any(not isinstance(v,str) or not v.strip() for v in values) or card['answer'] not in values:
+                raise ValueError('Invalid accepted_answers: '+cid)
+        entry = support.get(cid,{})
+        if entry:
+            frozen = {k:v for k,v in card.items() if k!='explanation'}
+            digest = hashlib.sha256(json.dumps(frozen,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+            if digest!=entry['sourceContentSha256'] or hashlib.sha256(card['explanation'].encode()).hexdigest()!=entry['explanationSha256']:
+                raise ValueError('Published card/support data disagree: '+cid)
+        position = mapping(card)
         task = position['task']
-        version_basis = {'card': c, 'position': position, 'assessmentPolicy': 'responses-v1'}
-        material_version = max(2, int(hashlib.sha256(json.dumps(version_basis, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:8], 16))
-        trusted = bool(c.get('answer_verify', '').strip())
-        has_context = task not in {1, 2, 3, 23, 24, 25, 26} or bool(text(c.get('text', '')))
-        options_complete = not c.get('variants') or all(text(str(v)) for v in c['variants'])
-        eligible = options_complete and trusted and task is not None and position['formatStatus'] != 'historical_format' and has_context
-        review = overrides.get(cid, {})
-        if review.get('eligibleForProgress') is False: eligible = False
+        allowed = task not in {5,6,7} or entry.get('explanationPublished',False)
+        public_card = card if allowed else {**card,'explanation':''}
+        basis = {'card':card,'position':position,'assessmentPolicy':'responses-v1'}
+        version = max(2,int(hashlib.sha256(json.dumps(basis,sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:8],16))
+        trusted = bool(card.get('answer_verify','').strip())
+        context = task not in {1,2,3,23,24,25,26} or bool(text(card.get('text','')))
+        complete = not card.get('variants') or all(text(str(v)) for v in card['variants'])
+        active_policy = policy.get(cid,{})
+        eligible = complete and trusted and task is not None and position['formatStatus']!='historical_format' and context
+        if active_policy.get('eligibleForProgress') is False:
+            eligible = False
+        refs = entry.get('ruleSourceRefs',[])
+        if any(r['sourceId'] not in source_ids for r in refs):
+            raise ValueError('Missing rule source for '+cid)
+        stress_refs = entry.get('stressRefs',[])
+        if any(type(r.get('part')) is not int or not 1 <= r['part'] <= 5 or
+               type(r.get('page')) is not int or not 1 <= r['page'] <= 7 for r in stress_refs):
+            raise ValueError('Invalid stress-list page: '+cid)
+        comparisons = []
+        for pid in entry.get('paronymPairIds',[]) if allowed else []:
+            pair = pairs[pid]
+            comparisons.append({**pair,'words':[{**word,'dictionaryRefs':[public_ref(r,sources) for r in word['dictionaryRefs']]} for word in pair['words']]})
         catalog.append({
-            'id': cid, **position, 'legacyTask': classify(c), 'title': c['question'][:210],
-            'skillId': f'task-{task}' if task else None,
-            'hasVerifiedAnswer': trusted, 'eligibleForProgress': eligible,
-            'materialVersion': material_version,
-            'ruleIds': [p['id'] for p in handbook['paragraphs'] if task in p['tasks']],
-            'ruleRefs': [{'id':p['id'], 'label':f"§{p['number']}. {p['title']}"} for p in handbook['paragraphs'] if task in p['tasks']],
-            'explanationStatus': review.get('explanationStatus', 'pending_subject_review' if c.get('explanation', '').strip() else 'missing'),
-            'explanationReviewStatus': prefix_reviews.get(cid, {}).get('status'),
-            'explanationSourceRefs': [{'part':row['number'], 'sourceId':sid, 'label':f"Орфография, §{sid.rsplit('-',1)[1]} · Эксмо, 2007"} for row in prefix_reviews.get(cid, {}).get('rows', []) for sid in row['sourceIds']],
-            'reviewNote': review.get('reason', '' if options_complete else 'Варианты ответов неполны. Автоматическая проверка отключена до восстановления по источнику.'),
-            'hasAnswer': bool(c.get('answer', '').strip()),
-            'hasExplanation': bool(c.get('explanation', '').strip()),
-            'hasPassage': bool(text(c.get('text', ''))),
+            'id':cid,**position,'title':card['question'][:210],
+            'skillId':f'task-{task}' if task else None,'hasVerifiedAnswer':trusted,
+            'eligibleForProgress':eligible,'materialVersion':version,
+            'ruleIds':[p['id'] for p in handbook['paragraphs'] if task in p['tasks']],
+            'ruleRefs':[{'id':p['id'],'label':f"§{p['number']}. {p['title']}"} for p in handbook['paragraphs'] if task in p['tasks']],
+            'strategyHint':entry.get('hint','') if allowed else '',
+            'dictionarySourceRefs':[public_ref(r,sources) for r in entry.get('dictionaryRefs',[])] if allowed else [],
+            'paronymComparisons':comparisons,'explanationSourceRefs':refs,
+            **({'grammarSourceRefs':entry['grammarSourceRefs']} if entry.get('grammarSourceRefs') else {}),
+            **({'styleSourceRefs':entry['styleSourceRefs']} if entry.get('styleSourceRefs') else {}),
+            **({'stressSourceRefs':stress_refs} if stress_refs else {}),
+            'reviewNote':entry.get('reviewNote',active_policy.get('reason','' if complete else 'Варианты ответов неполны. Автоматическая проверка отключена до восстановления по источнику.')),
+            **({'explanationNeedsSourceReview':True,'explanationReviewNote':entry['explanationReviewNote']} if entry.get('explanationNeedsSourceReview') else {}),
+            'hasAnswer':bool(card.get('answer','').strip()),'hasExplanation':bool(public_card.get('explanation','').strip()),
+            'hasPassage':bool(text(card.get('text',''))),
         })
-        (OUT / 'cards' / f'{cid}.json').write_text(
-            json.dumps(c, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-    (OUT / 'catalog.json').write_text(json.dumps({
-        'schemaVersion': 1, 'classificationStatus': 'official_fipi_2027_draft',
-        'classificationSource': 'docs/ege-2027-card-mapping.md',
-        'learningPolicyStatus': 'experimental_not_pedagogically_validated',
-        'taskNames': names, 'cards': catalog,
-    }, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-    print(f'UI data: {len(catalog)} cards; source JSON unchanged')
+        write(OUT/'cards'/f'{cid}.json',public_card)
+    write(OUT/'catalog.json',{'schemaVersion':1,'classificationStatus':'official_fipi_2027_draft','taskNames':names,'cards':catalog})
+    print(f'Application data: {len(catalog)} cards; production inputs only')
 
 
-if __name__ == '__main__':
+def re_id(value):
+    return len(value)==6 and all(c in '0123456789ABCDEF' for c in value)
+
+
+if __name__=='__main__':
     main()

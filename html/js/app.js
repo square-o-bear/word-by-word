@@ -1,3 +1,6 @@
+import { renderGrammarReferences } from "./grammar-sources.js";
+import { filterStressGlossary } from "./stress-glossary.js";
+import { renderStressReferences } from "./stress-list.js";
 import {
   loadSettings,
   saveSettings,
@@ -7,13 +10,17 @@ import {
   adjustSetting,
 } from "./settings.js";
 import { knowledgePage } from "./knowledge.js";
+import {
+  renderParonymComparisons,
+  renderDictionaryReferences,
+} from "./paronyms.js";
 import { recommendPractice } from "./adaptive.js";
 import { checkResponse } from "./assessment.js";
 import { orderCards } from "./bank-order.js";
 import { projectProgress, labels } from "./learning.js";
 import { renderGlobalProgress, renderLearningProgress } from "./progress.js";
 import { strategyHint } from "./hints.js";
-import { icon, esc, rich, plain, num } from "./ui.js";
+import { icon, esc, rich, richExplanation, plain, num } from "./ui.js";
 import { parseProgress, mergeProgress } from "./progress-transfer.js";
 import { loadCatalog, loadCard } from "./data.js";
 import { store } from "./store.js";
@@ -257,6 +264,49 @@ function renderBank(params) {
       .join("")}</select></label></div><div id="bank-results"></div>`;
   bankResults();
 }
+function cardTheoryLinks(c) {
+  const rules = (c.ruleRefs || [])
+    .map(
+      (ref) =>
+        `<a class="text-link" href="#knowledge?rule=${esc(ref.id)}&card=${c.id}">${esc(ref.label)}</a>`,
+    )
+    .join("");
+  const guides = {
+    1: [["list=connections", "Средства связи: как подобрать слово"]],
+    2: [["list=meanings", "Как определить значение слова в контексте"]],
+    3: [["list=style", "Как проверить характеристики текста"]],
+    4: [
+      ["list=stress-words", "Словарик ударений из всех карточек"],
+      ["list=stress", "Полный список ударений по частям речи"],
+    ],
+    5: [
+      ["list=paronyms", "Алфавитный список паронимов"],
+      ["list=paronyms&view=theory", "Как различать паронимы"],
+    ],
+    6: [["list=lexical", "Лексические нормы: как редактировать предложение"]],
+    7: [["list=word-forms", "Формы слов: как выбрать правильную"]],
+  };
+  return (
+    rules +
+    (guides[c.task] || [])
+      .map(
+        ([query, label]) =>
+          `<a class="text-link" href="#knowledge?${query}&card=${c.id}">${label}</a>`,
+      )
+      .join("")
+  );
+}
+function contentIssue(c) {
+  if (!c.contentIssue) return "";
+  const id = `content-issue-${c.id}`;
+  return `<span class="content-issue"><button type="button" class="icon-button content-issue-toggle" data-action="content-issue" aria-label="Замечание к заданию" aria-describedby="${id}">${icon("warning")}</button><span id="${id}" class="content-issue-description" role="tooltip">${esc(c.contentIssue)}</span></span>`;
+}
+function dismissContentIssue() {
+  main.querySelectorAll(".content-issue").forEach((issue) => {
+    issue.classList.remove("is-open");
+    issue.classList.add("is-dismissed");
+  });
+}
 async function renderCard(id, version) {
   currentCard = null;
   main.innerHTML =
@@ -273,22 +323,22 @@ async function renderCard(id, version) {
   const status = learning().cardStates.get(id);
   const canCheck = Boolean(c.answer && !c.reviewNote);
   main.innerHTML = `<div class="card-breadcrumb"><a class="text-link" href="#bank">${icon("back")} К банку заданий</a><span>Группа ${meta?.task || "—"} · ${esc(id)}</span></div>
-    <div class="practice-layout"><article class="exercise"><div class="exercise-header"><span class="eyebrow">КАРТОЧКА ${id}</span><button class="icon-button ${tags.fav ? "selected" : ""}" data-action="favorite" aria-label="В избранное" aria-pressed="${!!tags.fav}">${icon("bookmark")}</button></div>
+    <div class="practice-layout"><article class="exercise"><div class="exercise-header"><div class="exercise-heading"><span class="eyebrow">КАРТОЧКА ${id}</span>${contentIssue(c)}</div><button class="icon-button ${tags.fav ? "selected" : ""}" data-action="favorite" aria-label="В избранное" aria-pressed="${!!tags.fav}">${icon("bookmark")}</button></div>
       <h1 class="exercise-title">${esc(catalog.taskNames[meta?.task] || "Практика русского языка")}</h1><div class="exercise-status"><span class="pill ${c.answer ? "sage-pill" : "neutral-pill"}">${c.hasVerifiedAnswer ? "Ответ ранее проверялся ФИПИ" : c.answer ? "Ответ из текущей базы" : "Самостоятельная проверка"}</span>${c.formatStatus === "historical_format" ? "<span>Прежний формат задания</span>" : ""}<span class="pill neutral-pill" data-learning-status>${labels[status]}</span><span data-learning-score>Оценка карточки: ${learning().cardScores.get(id) === null ? "ещё нет" : learning().cardScores.get(id).toFixed(3)}</span></div>
       ${c.passage ? `<details class="passage" open><summary>${icon("knowledge")} Текст к заданию<span>Свернуть / раскрыть</span></summary><div class="passage-content">${rich(c.passage)}</div></details>` : ""}
       ${c.reviewNote ? `<p class="feedback warning">${esc(c.reviewNote)}</p>` : ""}<section class="question-section" aria-labelledby="question-label"><h2 id="question-label">Задание</h2><div class="question-text">${rich(c.instruction)}</div></section>
       ${c.errors.length && c.sentences.length ? `<div class="matching"><section><h3>Грамматические ошибки</h3>${c.errors.map((x, i) => `<p><b>${"АБВГДЕ"[i] || i + 1}.</b> ${rich(x)}</p>`).join("")}</section><section><h3>Предложения</h3>${c.sentences.map((x, i) => `<p><b>${i + 1}.</b> ${rich(x)}</p>`).join("")}</section></div>` : ""}
       ${c.options.length ? `<fieldset class="options"><legend>${c.responseType === "multiple_choice" ? "Выберите верные варианты" : "Варианты к заданию"}</legend>${c.options.map((x, i) => (c.responseType === "multiple_choice" ? `<label class="option"><input type="checkbox" name="answer-option" value="${i + 1}"><span>${rich(x)}</span></label>` : `<div class="option static-option"><span class="option-number">${i + 1}</span><span>${rich(x)}</span></div>`)).join("")}</fieldset>` : ""}
-      <form id="answer-form" class="answer-form">${c.responseType !== "multiple_choice" ? `<label for="answer-input">${c.answer ? "Ваш ответ" : "Ваш ответ для самопроверки"}</label><input id="answer-input" autocomplete="off" placeholder="Введите ответ" ${c.answer ? "required" : ""}>` : ""}<div class="answer-actions">${canCheck ? `<button type="submit" class="button primary">Проверить ${icon("check")}</button>` : '<p class="muted">Автоматическая проверка недоступна: нет эталона или материал требует сверки.</p>'}<button type="button" class="button quiet" data-action="hint">Подсказка</button><button type="button" class="button quiet" data-action="reveal">${c.answer ? "Ответ и разбор" : "Открыть разбор"}</button></div></form>
+      <form id="answer-form" class="answer-form">${c.responseType !== "multiple_choice" ? `<label for="answer-input">${c.answer ? "Ваш ответ" : "Ваш ответ для самопроверки"}</label><input id="answer-input" autocomplete="off" placeholder="Введите ответ" ${c.answer ? "required" : ""}>` : ""}<div class="answer-actions">${canCheck ? `<button type="submit" class="button primary">Проверить ${icon("check")}</button>` : '<p class="muted">Автоматическая проверка недоступна: нет эталона или материал требует сверки.</p>'}<button type="button" class="button quiet" data-action="hint">Подсказка</button><button type="button" class="button quiet" data-action="reveal">${c.answer ? (c.task === 5 && !c.hasExplanation ? "Показать ответ" : "Ответ и разбор") : "Открыть разбор"}</button></div></form>
       <section id="hint" class="aside-card" hidden aria-live="polite"></section><div id="answer-feedback" aria-live="polite"></div><button class="text-link" data-action="new-attempt">Начать новую попытку</button><section id="explanation" class="explanation" hidden></section>
       <div class="exercise-bottom"><button class="button quiet ${tags.hard ? "selected" : ""}" data-action="repeat" aria-pressed="${!!tags.hard}">${icon("repeat")} Повторить позже</button><button class="button secondary ${tags.studied ? "selected" : ""}" data-action="studied" aria-pressed="${!!tags.studied}">${icon("check")} ${tags.studied ? "Отмечено изученным" : "Отметить изученным"}</button><button class="button primary" data-action="next">Дальше ${icon("arrow")}</button></div>
-    </article><aside class="practice-aside"><div class="aside-card"><span class="eyebrow">СНАЧАЛА ПОНИМАНИЕ</span><h2>Правило рядом</h2><p>${c.ruleRefs?.length ? "Вспомните правило и посмотрите примеры по этой теме." : "Найдите нужную тему в справочнике."}</p><div class="rule-links">${(c.ruleRefs || []).map((ref) => `<a class="text-link" href="#knowledge?rule=${esc(ref.id)}&card=${c.id}">${esc(ref.label)}</a>`).join("")}</div><button class="text-link" data-action="card-rules">Открыть справочник ${icon("arrow")}</button></div><div class="aside-tip">${icon("leaf")}<p>Не торопитесь. Можно вернуться к тексту, попробовать ещё раз или отложить карточку.</p></div><button class="text-link" data-action="report">Нашли неточность?</button></aside></div>`;
+    </article><aside class="practice-aside"><div class="aside-card"><span class="eyebrow">СНАЧАЛА ПОНИМАНИЕ</span><h2>Правило рядом</h2><p>${c.task === 4 ? "Сравните похожие слова в словарике и проверьте форму по списку ФИПИ." : c.ruleRefs?.length ? "Вспомните правило и посмотрите примеры по этой теме." : "Найдите нужную тему в справочнике."}</p><div class="rule-links">${cardTheoryLinks(c)}</div><button class="text-link" data-action="card-rules">Открыть справочник ${icon("arrow")}</button></div><div class="aside-tip">${icon("leaf")}<p>Не торопитесь. Можно вернуться к тексту, попробовать ещё раз или отложить карточку.</p></div><button class="text-link" data-action="report">Нашли неточность?</button></aside></div>`;
 }
 function renderExplanation() {
   const c = currentCard;
   const area = document.querySelector("#explanation");
   area.hidden = false;
-  area.innerHTML = `<span class="eyebrow">РАЗБЕРЁМСЯ ВМЕСТЕ</span><h2>${c.answer ? "Ответ: " + esc(c.answer) : "Эталонный ответ ещё не добавлен"}</h2>${c.reviewNote ? `<p class="feedback warning">${esc(c.reviewNote)}</p>` : ""}${c.explanation ? `<div class="explanation-text">${rich(c.explanation)}</div>` : "<p>Объяснение пока недоступно. Можно обратиться к справочнику.</p>"}${c.explanationSourceRefs?.length ? `<details class="explanation-sources"><summary>Источники по рядам задания</summary><nav class="rule-links">${c.explanationSourceRefs.map((ref) => `<a class="text-link" href="#knowledge?source=${esc(ref.sourceId)}&card=${c.id}">Ряд ${ref.part}: ${esc(ref.label)}</a>`).join("")}</nav></details>` : ""}<div class="rule-links">${(c.ruleRefs || []).map((ref) => `<a class="text-link" href="#knowledge?rule=${esc(ref.id)}&card=${c.id}">${esc(ref.label)}</a>`).join("")}</div><button class="text-link" data-action="card-rules">${icon("knowledge")} Связанные правила</button>`;
+  area.innerHTML = `<span class="eyebrow">РАЗБЕРЁМСЯ ВМЕСТЕ</span><h2>${c.answer ? "Ответ: " + esc(c.answer) : "Эталонный ответ ещё не добавлен"}</h2>${c.acceptedAnswers.length > 1 ? `<p>Также принимается: ${c.acceptedAnswers.filter((answer) => answer !== c.answer).map(esc).join(", ")}.</p>` : ""}${c.reviewNote ? `<p class="feedback warning">${esc(c.reviewNote)}</p>` : ""}${c.explanationReviewNote ? `<p class="feedback warning" data-explanation-review>${esc(c.explanationReviewNote)}</p>` : ""}${c.explanation ? `<div class="explanation-text">${richExplanation(c.explanation)}</div>` : "<p>Объяснение пока недоступно. Можно обратиться к справочнику.</p>"}${renderParonymComparisons(c.paronymComparisons, c.id)}${renderStressReferences(c.stressSourceRefs)}${renderGrammarReferences(c.grammarSourceRefs, { kind: c.task === 6 ? "lexical" : c.task === 1 ? "cohesion" : c.task === 7 ? "morphology" : "grammar" })}${renderGrammarReferences(c.styleSourceRefs, { kind: "style" })}${c.explanationSourceRefs?.length ? `<details class="explanation-sources"><summary>Источники по рядам задания</summary><nav class="rule-links">${c.explanationSourceRefs.map((ref) => `<a class="text-link" href="#knowledge?source=${esc(ref.sourceId)}&card=${c.id}">Ряд ${ref.part}: ${esc(ref.label)}</a>`).join("")}</nav></details>` : ""}${c.dictionarySourceRefs?.length ? `<details class="explanation-sources"><summary>${c.task === 6 ? "Источники разбора" : "Словарные источники разбора"}</summary>${renderDictionaryReferences(c.dictionarySourceRefs, c.id)}</details>` : ""}<div class="rule-links">${cardTheoryLinks(c)}</div><button class="text-link" data-action="card-rules">${icon("knowledge")} Связанные правила</button>`;
 }
 function checkAnswer(event) {
   event.preventDefault();
@@ -305,7 +355,7 @@ function checkAnswer(event) {
     area.innerHTML = '<p class="feedback warning">Сначала укажите ответ.</p>';
     return;
   }
-  const correct = checkResponse(c.responseType, actual, c.answer);
+  const correct = checkResponse(c.responseType, actual, c.acceptedAnswers);
   // One completion result per assignment; intermediate errors remain in history.
   const assignment = store.assignment(c.id);
   if (assignment.completed) {
@@ -449,6 +499,7 @@ async function render() {
 
 // Delegated interactions shared across screens.
 document.addEventListener("click", async (event) => {
+  if (!event.target.closest(".content-issue")) dismissContentIssue();
   if (event.target.closest('#info-dialog a[href^="#"]'))
     document.querySelector("#info-dialog").close();
   const button = event.target.closest("[data-action], [data-filter]");
@@ -464,6 +515,13 @@ document.addEventListener("click", async (event) => {
     return;
   }
   switch (button.dataset.action) {
+    case "content-issue": {
+      const issue = button.closest(".content-issue");
+      const open = !issue.classList.contains("is-open");
+      issue.classList.toggle("is-open", open);
+      issue.classList.toggle("is-dismissed", !open);
+      break;
+    }
     case "adjust-setting":
       adjustSetting(
         main.querySelector(`[name="${button.dataset.target}"]`),
@@ -500,7 +558,7 @@ document.addEventListener("click", async (event) => {
       store.markAssignment(currentCard.id, "assisted");
       const area = main.querySelector("#hint");
       area.hidden = false;
-      area.innerHTML = `<h3>Подсказка к способу решения</h3><p>${esc(strategyHint(currentCard.task))}</p><p class="muted">Подсказка использована: ответ в этой попытке не считается самостоятельным.</p>`;
+      area.innerHTML = `<h3>Подсказка к способу решения</h3><p>${esc(currentCard.strategyHint || strategyHint(currentCard.task))}</p><p class="muted">Подсказка использована: ответ в этой попытке не считается самостоятельным.</p>`;
       break;
     }
     case "new-attempt":
@@ -572,7 +630,16 @@ document.addEventListener("click", async (event) => {
     }
     case "card-rules":
       if (currentCard) {
-        location.hash = `knowledge?card=${currentCard.id}`;
+        const lists = {
+          1: "connections",
+          2: "meanings",
+          3: "style",
+          4: "stress",
+          5: "paronyms",
+          6: "lexical",
+          7: "word-forms",
+        };
+        location.hash = `knowledge?${lists[currentCard.task] ? "list=" + lists[currentCard.task] + "&" : ""}card=${currentCard.id}`;
       }
       break;
     case "report":
@@ -650,6 +717,8 @@ document
     }
   });
 document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-stress-search]"))
+    filterStressGlossary(event.target.closest(".stress-glossary"), event.target.value);
   if (event.target.id === "bank-search") {
     filter.query = event.target.value;
     filter.page = 1;
@@ -698,7 +767,17 @@ document.addEventListener("submit", (event) => {
     }
   }
 });
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches('[data-action="content-issue"]'))
+    event.target.parentElement.classList.remove("is-dismissed");
+});
+document.addEventListener("pointerover", (event) => {
+  const button = event.target.closest('[data-action="content-issue"]');
+  if (button && !button.parentElement.contains(event.relatedTarget))
+    button.parentElement.classList.remove("is-dismissed");
+});
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") dismissContentIssue();
   if (
     event.target.matches('.settings-form input[type="number"]') &&
     ["ArrowUp", "ArrowDown"].includes(event.key)

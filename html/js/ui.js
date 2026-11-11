@@ -1,5 +1,6 @@
 /** Shared presentation helpers: icons, numbers and safe source formatting. */
 const icons = {
+  warning: '<path d="M12 3 2 21h20L12 3Z"/><path d="M12 9v5"/><circle cx="12" cy="17.5" r=".65" fill="currentColor" stroke="none"/>',
   study: '<path d="m9 5 11 7-11 7z"/>',
   bank: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
   progress: '<path d="M5 20V10m7 10V4m7 16v-7"/>',
@@ -54,6 +55,13 @@ export function rich(value, { markdown = true } = {}) {
     return name === "br" ? "<br>" : `<${name}>${inside}</${name}>`;
   }
   return [...doc.body.childNodes].map(clean).join("").replace(/\n/g, "<br>");
+}
+// Correction examples share one visual emphasis without changing card versions.
+export function richExplanation(value) {
+  return rich(value).replace(
+    /((?:<(?:b|strong)>)?(?:Правильно|Возможное исправление|Нейтральная редакция):(?:<\/(?:b|strong)>)?)([ \t]*)([\s\S]*?)(?=<br>|<\/p>|$)/g,
+    (_, label, space, sentence) => `${label}${space}<strong>${sentence}</strong>`,
+  );
 }
 export const plain = (s) =>
   new DOMParser().parseFromString(s || "", "text/html").body.textContent;

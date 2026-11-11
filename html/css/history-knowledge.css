@@ -1,4 +1,4 @@
-/* Real progress history, knowledge placeholder, dialogs and toast. */
+/* History, reference pages, dialogs and notifications. */
 .progress-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -284,7 +284,103 @@ dialog form {
   margin-top: 24px;
   overflow-wrap: anywhere;
 }
+.stress-intro {
+  margin-block: 20px;
+  color: var(--muted);
+}
+.paronym-list {
+  columns: 2 300px;
+  column-gap: 44px;
+  margin-top: 24px;
+  padding-left: 24px;
+}
+.paronym-list li {
+  break-inside: avoid;
+  padding-block: 9px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.stress-words {
+  columns: 2 270px;
+  column-gap: 36px;
+  padding-left: 22px;
+  margin-top: 24px;
+}
+.stress-words li {
+  break-inside: avoid;
+  padding-block: 6px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.stress-words b {
+  color: var(--ink);
+}
+.stress-words sup {
+  margin-left: 3px;
+}
+.stress-notes {
+  padding-left: 22px;
+  margin-block: 20px;
+  line-height: 1.7;
+}
+.stress-notes li + li {
+  margin-top: 12px;
+}
 .source-notes {
   border-top: 1px solid var(--line);
   padding-top: 20px;
+}
+
+.glossary-search {
+  margin-block: 28px;
+}
+.glossary-search label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.glossary-search input {
+  width: min(100%, 520px);
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.stress-comparison {
+  padding-top: 22px;
+}
+.stress-comparison + .stress-comparison {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.stress-comparison p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.stress-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+  margin-block: 16px 0;
+}
+.stress-chips li {
+  padding: 8px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 1.05rem;
+}
+.stress-chips b {
+  color: var(--accent);
+}
+.stress-chips small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.stress-glossary [hidden] {
+  display: none;
 }
